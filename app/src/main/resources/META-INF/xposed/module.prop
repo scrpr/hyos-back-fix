@@ -2,5 +2,5 @@ minApiVersion=102
 targetApiVersion=102
 staticScope=true
 exceptionMode=passthrough
-autoHotReload=true
+autoHotReload=false
 

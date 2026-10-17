@@ -4,11 +4,14 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
-// Read-only diagnostics, independent of hook decisions. The receiver in Home
-// checks both PID and start time, so a previous process can never report success.
+// Native diagnostics only: logcat plus a private snapshot for manual inspection.
+// A snapshot can outlive its process; PID/start identify which process wrote it.
 namespace diagnostics {
 inline void publish(const char *stage, bool guard, bool remote, bool remoteBack,
                     bool merge, size_t pages) {
+    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
+            "status pid=%d version=" MODULE_VERSION " stage=%s guard=%d remote=%d remoteBack=%d merge=%d pages=%zu pageSize=%ld",
+            getpid(), stage, guard, remote, remoteBack, merge, pages, sysconf(_SC_PAGESIZE));
     char stat[4096]{};
     FILE *file = fopen("/proc/self/stat", "r");
     if (!file) return;

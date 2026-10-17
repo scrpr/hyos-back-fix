@@ -15,32 +15,28 @@ namespace hook_pages {
 namespace {
 using Madvise = int (*)(void *, size_t, int);
 std::atomic<Madvise> originalMadvise;
-// Process-lifetime reclamation state shared across generations. A late call into
-// an old guard must use the new generation's lock and patch pages, too.
 struct PageState {
     std::mutex lock;
     uintptr_t pages[6]{};
     size_t count = 0;
     const size_t size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
 };
-PageState *state;
-Madvise *importSlot;
-int importProtection;
+PageState state;
 
 uintptr_t pageStart(uintptr_t address) {
-    return address & ~(uintptr_t(state->size)-1);
+    return address & ~(uintptr_t(state.size)-1);
 }
 
 int guardedMadvise(void *address, size_t length, int advice) {
     auto original = originalMadvise.load(std::memory_order_acquire);
     uintptr_t begin = reinterpret_cast<uintptr_t>(address);
     // Preserve the syscall's validation and all other advice operations.
-    if (advice != MADV_DONTNEED || !length || begin%state->size || length > UINTPTR_MAX-begin)
+    if (advice != MADV_DONTNEED || !length || begin%state.size || length > UINTPTR_MAX-begin)
         return original(address, length, advice);
 
-    std::unique_lock<std::mutex> lock(state->lock);
+    std::unique_lock<std::mutex> lock(state.lock);
     unsigned skipped = 0;
-    int result = reclaimRanges(begin, length, state->size, state->pages, state->count,
+    int result = reclaimRanges(begin, length, state.size, state.pages, state.count,
             [&](uintptr_t at, size_t size) { return original(reinterpret_cast<void *>(at), size, advice); }, skipped);
     if (result != 0) return result;
     lock.unlock();
@@ -95,16 +91,14 @@ bool install(const dl_phdr_info &image) {
         auto *slot = reinterpret_cast<Madvise *>(image.dlpi_addr+entry.r_offset);
         uintptr_t page = pageStart(reinterpret_cast<uintptr_t>(slot));
         int protection = protectionAt(reinterpret_cast<uintptr_t>(slot));
-        if (!protection || mprotect(reinterpret_cast<void *>(page), state->size, protection|PROT_WRITE) != 0)
+        if (!protection || mprotect(reinterpret_cast<void *>(page), state.size, protection|PROT_WRITE) != 0)
             return false;
         originalMadvise.store(__atomic_load_n(slot, __ATOMIC_ACQUIRE), std::memory_order_release);
         __atomic_store_n(slot, guardedMadvise, __ATOMIC_RELEASE);
-        importSlot = slot;
-        importProtection = protection;
-        if (mprotect(reinterpret_cast<void *>(page), state->size, protection) != 0) return false;
+        if (mprotect(reinterpret_cast<void *>(page), state.size, protection) != 0) return false;
         // The runtime's import slot is in data/RELRO, outside its r-x code reclamation.
         __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
-                "reclaim guard installed slot=%p page_size=%zu", static_cast<void *>(slot), state->size);
+                "reclaim guard installed slot=%p page_size=%zu", static_cast<void *>(slot), state.size);
         return true;
     }
     errno = ENOENT;
@@ -113,42 +107,18 @@ bool install(const dl_phdr_info &image) {
 
 int hook(InlineHook installer, void *target, void *replacement, void **original) {
     // Serialize patch installation with in-flight reclamation and publish before writing.
-    std::lock_guard<std::mutex> lock(state->lock);
+    std::lock_guard<std::mutex> lock(state.lock);
     uintptr_t begin = reinterpret_cast<uintptr_t>(target);
-    for (uintptr_t page=pageStart(begin); page<=pageStart(begin+31); page+=state->size) {
-        if (std::find(state->pages, state->pages+state->count, page) == state->pages+state->count)
-            state->pages[state->count++] = page;
+    for (uintptr_t page=pageStart(begin); page<=pageStart(begin+31); page+=state.size) {
+        if (std::find(state.pages, state.pages+state.count, page) == state.pages+state.count)
+            state.pages[state.count++] = page;
     }
     return installer(target, replacement, original);
 }
 
 size_t count() {
-    std::lock_guard<std::mutex> lock(state->lock);
-    return state->count;
+    std::lock_guard<std::mutex> lock(state.lock);
+    return state.count;
 }
 
-int unhook(InlineUnhook remover, void *target) {
-    // Keep the patch pages protected while the backend restores stock code.
-    std::lock_guard<std::mutex> lock(state->lock);
-    return remover(target);
-}
-
-bool uninstall() {
-    std::lock_guard<std::mutex> lock(state->lock);
-    if (!importSlot) return true;
-    auto *page = reinterpret_cast<void *>(pageStart(reinterpret_cast<uintptr_t>(importSlot)));
-    if (mprotect(page, state->size, importProtection | PROT_WRITE) != 0) return false;
-    __atomic_store_n(importSlot, originalMadvise.load(std::memory_order_acquire), __ATOMIC_RELEASE);
-    if (mprotect(page, state->size, importProtection) != 0) return false;
-    importSlot = nullptr;
-    state->count = 0;
-    // The original pointer stays valid for an in-flight call to the retired guard.
-    return true;
-}
-
-void adoptState(uintptr_t address) {
-    state = address ? reinterpret_cast<PageState *>(address) : new PageState;
-}
-
-uintptr_t stateAddress() { return reinterpret_cast<uintptr_t>(state); }
 }

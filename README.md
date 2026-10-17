@@ -43,51 +43,36 @@
 
 包名与旧模块不同，因此可以同时安装，但不要同时启用。模块使用静态作用域。
 
-## API 102 热重载
+## 原生启动
 
-模块设置 `autoHotReload=true`，实现 API 102 的 `onHotReloading` 和
-`onHotReloaded`。使用支持该能力及 native 注入的 LSPosed 时，同签名覆盖更新可由
-框架直接在当前桌面进程完成交接，无需每次强制重启桌面。
+桌面运行在独立的 HyperOS Rust Runtime 中，没有 Java / JNI 环境。
+LSPosed 调用 `native_init` 时直接启动安装线程，等待 Flutter 运行时、Rust 桌面库
+和 Dart AOT 业务出现，依次安装回收保护与三处 inline hook。库加载回调也调用同一
+启动入口，`std::call_once` 保证安装线程只启动一次。
 
-- 旧代停止安装线程和新的返回任务，取消尚在等待的返回导航 / Rust Future，回收工作线程。
-- 在回收保护仍在时，通过 LSPosed native unhook 撤销三处 inline hook；随后恢复
-  运行时的 `madvise` 导入，清空补丁页登记，注销广播接收器和待执行的 Java 回调。
-- 只把框架 hook/unhook 函数地址和进程级回收状态地址作为 `Bundle` 内的 `long[]`
-  传给新代，不传旧代 Java 对象。各代共享回收锁与页登记，旧代尚未返回的回收调用也会
-  看到新代的补丁页，避免交接瞬间回收掉新补丁。此状态布局是模块内部的跨代 ABI。
-- 新代从当前 APK 提取独立 inode 的 `.so`，重新加载并启动安装线程，重新注册自检。
-  不依赖框架重放包加载回调；`native_init` 不注册永久的库加载回调。
-- 已退出的原生映射保持到进程结束，以允许正在返回的原生栈及 Rust waker 释放代码完成；
-  不保留旧 Java 类加载器。临时 `.so` 文件在加载后删除。每次更新会保留一份旧原生映射，
-  不做 `dlclose` 强制回收，也不通过字节比较判断是否允许更新。
+Java 入口仅保留框架注册声明，不启动原生库、不注册诊断广播。
+模块不使用 JNI、不提取或重复加载 `.so`，也不支持热重载；启用、更新或停用后
+需要重启系统桌面。原生代码和回收保护随桌面进程存活。
 
-从不支持热重载的旧模块迁移仍需重启一次桌面：旧模块没有退出入口，新的 APK
-无法替旧进程实现卸载。停用模块或框架不支持热重载时，同样需重启桌面。
-若 native unhook / 恢复导入失败，框架收到失败结果，自检显示交接未完成；不会伪报成功。
-热重载期间尚未完成的返回请求会取消，新代接管后再次按返回即可。
-
-生命周期依据：[libxposed API 102 文档](https://libxposed.github.io/api/io/github/libxposed/api/XposedModuleInterface.html)。
+入口约定见 [LSPosed Native Hook 文档](https://github.com/LSPosed/LSPosed/wiki/Native-Hook)。
 
 ## miuix 界面与自检
 
 界面使用真实的 [miuix](https://github.com/compose-miuix-ui/miuix/tree/v0.5.1)
 Compose 组件，支持系统浅色 / 深色主题、滚动说明、重新自检和复制诊断报告。
 
-自检展示设备 ABI、系统桌面版本（仅展示）、页面大小，以及桌面当前进程回报的：
+UI 自检展示设备 ABI、系统桌面版本和页面大小。它不依赖 Java 广播，
+也不把环境信息已读取当成模块生效。普通应用无法直接读取桌面 Runtime 的私有状态，
+因此原生安装状态明确显示为未确认，并提供日志查看方式。
 
-- Java 模块加载状态；
-- ForRemote、ForRemoteBack 和 Dart merge 的 inline hook 安装结果；
-- `MADV_DONTNEED` 保护安装结果与登记的补丁页数；
-- 原生安装阶段、模块版本和桌面 PID。
-- 当前模块是否接入 API 102 热重载。
+原生线程将每次安装阶段写入 logcat，同时尝试保存到
+`/data/user/<用户编号>/com.miui.home/files/hyos-back-fix.status`，供具有权限时手动读取。
+报告包含三处 Hook、回收保护、补丁页数、阶段、版本、PID 和进程启动时刻。
+文件可能保留自上一个进程，必须结合当前 PID / 启动时刻判断；不能仅凭文件中的
+`installed` 确认当前进程。文件写入失败不会影响日志发布或返回处理。
 
-无需申请额外 root。Java 入口管理原生库的加载 / 退出和只读状态广播，没有 Java 业务 Hook
-或系统框架 Hook。原生安装线程将状态写入桌面私有目录，接收器对照 PID 与进程启动
-时刻后才返回。没有响应或没有当前进程报告时显示未知 / 等待，不显示已生效。
-状态回报故障不会改变返回处理逻辑。
-
-自检报告的是**安装结果**，不读取补丁字节，不证明某次返回已经发生，也不证明未来
-所有回收事件均被拦截。实际效果需用户在启动动画中返回、熄屏恢复后返回等场景体验确认。
+原生日志报告的是**安装结果**，不读取补丁字节，也不证明某次返回已经发生。
+实际效果需在启动动画中返回、熄屏恢复后返回等场景体验确认。
 
 日志：
 
@@ -95,6 +80,7 @@ Compose 组件，支持系统浅色 / 深色主题、滚动说明、重新自检
 adb logcat -v threadtime -s HyosBackFixNative
 ```
 
+`native installer started` 表示原生入口已启动安装线程；`status ... stage=...` 显示安装阶段。
 `reclaim guard installed` 表示回收导入已接管；`native hook installed` 表示三处 Hook
 安装完成；`reclaim preserved` 表示一次回收实际跳过了补丁页。`state=1/2/3/4` 分别
 对应 OPEN / CLOSE / OPEN_NEAR_FULL / NormalState。`path=callback/fallback` 表示调用
@@ -111,11 +97,14 @@ adb logcat -v threadtime -s HyosBackFixNative
 .\build.ps1 -SdkPath '你的 Android SDK 目录' -NdkPath '你的 NDK 目录'
 ```
 
-输出：`dist/hyos-back-fix-0.1.0.apk`。脚本只构建 APK；项目不包含测试代码、测试脚本
+输出：`dist/hyos-back-fix-0.1.0.apk`，为开启 R8 代码压缩、混淆及资源裁剪的 Release APK。
+仅打包 ARM64 库，保留 LSPosed 入口类名。脚本默认使用本地签名，也支持通过下述环境变量指定签名。
+脚本只构建 APK；项目不包含测试代码、测试脚本
 或测试依赖。缓存、临时文件及本地签名密钥位于 `.local`，不会提交到 Git。
 请保留 `.local/debug.keystore`，以便后续 APK 可以覆盖安装。
 
-也可以直接设置 `ANDROID_HOME` 和 `ANDROID_NDK_HOME` 后运行 `./gradlew assembleDebug`。
+也可以直接设置 `ANDROID_HOME` 和 `ANDROID_NDK_HOME` 后运行
+`./gradlew -Pbackfix.localSigning=true assembleRelease`。`assembleDebug` 用于未裁剪的调试构建。
 不需要外部参考仓库、固件文件或当前工作区的其他目录即可构建。
 版本在 `gradle.properties` 的 `moduleVersionName` / `moduleVersionCode` 中统一维护；
 APK 和原生自检报告使用同一个版本名称。
@@ -124,6 +113,7 @@ APK 和原生自检报告使用同一个版本名称。
 
 [Build APK](.github/workflows/build.yml) 在 push、pull request 和手动触发时安装所需
 SDK / NDK，执行 `assembleDebug assembleRelease`，把两种 APK 上传到 Actions Artifacts。
+Release 开启代码和资源裁剪，并单独保存 `mapping.txt`，用于还原混淆后的崩溃堆栈。
 工作流只构建，不添加或运行测试，不自动发布 Release。
 
 无需 Secrets 即可构建：Debug APK 使用当次生成的开发签名，Release APK 未签名。
@@ -150,7 +140,7 @@ CI 的临时 Debug 签名不能用于连续覆盖更新。需要可覆盖更新�
 - `native/src/hook_pages.cpp` / `reclaim_ranges.h`：补丁页登记和回收区间拆分。
 - `native/src/symbols.h` / `rust_wake.h`：ELF 符号定位与 Rust Future 唤醒。
 - `native/src/diagnostics.h`：独立于业务逻辑的安装状态发布。
-- `app/src/main/java/dev/scrpr/hyosbackfix`：miuix UI、自检和 LSPosed Java 加载入口。
+- `app/src/main/java/dev/scrpr/hyosbackfix`：miuix UI、环境自检和 LSPosed 注册声明。
 
 ## 开源协议
 

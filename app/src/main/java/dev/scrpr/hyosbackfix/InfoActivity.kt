@@ -62,7 +62,7 @@ private fun BackFixScreen(context: Context) {
         Section {
             Text(if (running) "正在自检…" else report?.title ?: "准备自检", fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
-            Text(if (running) "正在读取设备信息并请求桌面进程状态。" else report?.detail ?: "", lineHeight = 23.sp)
+            Text(if (running) "正在读取设备与系统桌面信息。" else report?.detail ?: "", lineHeight = 23.sp)
             Spacer(Modifier.height(18.dp))
             TextButton(text = if (running) "检查中…" else "重新自检", onClick = check,
                 enabled = !running, modifier = Modifier.fillMaxWidth())
@@ -82,7 +82,7 @@ private fun BackFixScreen(context: Context) {
                     }
                 }
             }
-            if (report == null) Text("等待设备和桌面进程回报…")
+            if (report == null) Text("等待设备信息…")
         }
         TextButton(text = if (copied) "已复制诊断报告" else "复制诊断报告", enabled = report != null && !running,
             modifier = Modifier.fillMaxWidth(), onClick = {
@@ -94,7 +94,7 @@ private fun BackFixScreen(context: Context) {
         Section {
             Info("01  启用模块", "在支持 Modern API 102 和 HyperOS Rust Runtime native 注入的 LSPosed 中启用本模块。")
             Info("02  选择系统桌面", "作用域仅勾选系统桌面（com.miui.home），首次启用后重启一次桌面。迁移时请先停用旧模块，避免重复 Hook。")
-            Info("03  更新与返回", "从桌面图标或后台卡片打开应用，在启动动画中按三键返回。支持 API 102 热重载的 LSPosed 会在同签名更新时自动交接；首次启用、从不支持热重载的旧模块迁移或停用后，重启一次桌面。", last = true)
+            Info("03  更新与返回", "从桌面图标或后台卡片打开应用，在启动动画中按三键返回。启用、更新或停用模块后，重启一次系统桌面使改动生效。", last = true)
         }
         Text("它如何工作", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
         Section {
