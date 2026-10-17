@@ -16,7 +16,7 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -54,12 +54,12 @@ jobs:
           for apk in minimal/build/outputs/apk/release/*.apk; do
             cp "$apk" "dist/hyos-back-fix-nogui-${apk##*/}"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hyos-back-fix-${{ github.run_number }}
           path: dist/*.apk
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hyos-back-fix-mapping-${{ github.run_number }}
           path: |
