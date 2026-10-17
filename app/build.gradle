@@ -1,0 +1,100 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'dev.scrpr.hyosbackfix'
+    compileSdk 36
+    buildToolsVersion '35.0.0'
+
+    defaultConfig {
+        applicationId 'dev.scrpr.hyosbackfix'
+        minSdk 36
+        targetSdk 36
+        versionCode providers.gradleProperty('moduleVersionCode').get().toInteger()
+        versionName providers.gradleProperty('moduleVersionName').get()
+    }
+
+    signingConfigs {
+        local {
+            storeFile rootProject.file('.local/debug.keystore')
+            storePassword 'android'
+            keyAlias 'hyos-back-fix'
+            keyPassword 'android'
+        }
+        release {
+            def path = providers.environmentVariable('SIGNING_STORE_FILE').orNull
+            if (path) {
+                storeFile file(path)
+                storePassword providers.environmentVariable('SIGNING_STORE_PASSWORD').get()
+                keyAlias providers.environmentVariable('SIGNING_KEY_ALIAS').get()
+                keyPassword providers.environmentVariable('SIGNING_KEY_PASSWORD').get()
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.local
+        }
+        release {
+            if (providers.environmentVariable('SIGNING_STORE_FILE').isPresent()) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    buildFeatures { compose true; buildConfig true }
+    sourceSets.main.jniLibs.srcDir layout.buildDirectory.dir('native/libs')
+    packaging.jniLibs.keepDebugSymbols += '**/libhyosbackfix.so'
+}
+
+tasks.register('buildNative', Exec) {
+    inputs.dir rootProject.file('native')
+    inputs.property 'moduleVersionName', providers.gradleProperty('moduleVersionName')
+    inputs.property 'ndk', providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orElse('')
+    outputs.dir layout.buildDirectory.dir('native/libs')
+    doFirst {
+        def ndk = providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orNull
+        if (!ndk) throw new GradleException('Set ANDROID_NDK_HOME or -Pbackfix.ndk to Android NDK r29')
+        def executable = new File(ndk, System.getProperty('os.name').startsWith('Windows') ? 'ndk-build.cmd' : 'ndk-build')
+        workingDir rootProject.projectDir
+        commandLine executable.absolutePath, 'NDK_PROJECT_PATH=.',
+                'APP_BUILD_SCRIPT=native/jni/Android.mk', 'NDK_APPLICATION_MK=native/jni/Application.mk',
+                'NDK_OUT=app/build/native/obj', 'NDK_LIBS_OUT=app/build/native/libs',
+                "MODULE_VERSION=${providers.gradleProperty('moduleVersionName').get()}", '-j4'
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'buildNative' }
+
+dependencies {
+    compileOnly 'io.github.libxposed:api:102.0.0'
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'androidx.core:core:1.16.0'
+    implementation 'top.yukonga.miuix.kmp:miuix-android:0.5.1'
+    implementation 'androidx.compose.foundation:foundation:1.8.2'
+    implementation 'androidx.compose.ui:ui:1.8.2'
+}
+
+tasks.register('prepareLocalSigning', Exec) {
+    def keyStore = rootProject.file('.local/debug.keystore')
+    outputs.file keyStore
+    onlyIf { !keyStore.exists() }
+    doFirst { keyStore.parentFile.mkdirs() }
+    commandLine new File(System.getProperty('java.home'), 'bin/keytool').absolutePath,
+            '-genkeypair', '-keystore', keyStore.absolutePath,
+            '-storepass', 'android', '-keypass', 'android',
+            '-alias', 'hyos-back-fix', '-keyalg', 'RSA', '-keysize', '2048',
+            '-validity', '10000', '-dname', 'CN=scrpr HyOS Back Fix', '-noprompt'
+}
+tasks.configureEach {
+    if (name == 'validateSigningDebug') {
+        dependsOn 'prepareLocalSigning'
+    }
+}
+
