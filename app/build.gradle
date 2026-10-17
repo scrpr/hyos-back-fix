@@ -60,29 +60,8 @@ android {
     packaging.jniLibs.keepDebugSymbols += '**/libhyosbackfix.so'
 }
 
-def backfixNdkPath = providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orNull
-android.ndkVersion = '29.0.14206865'
-if (backfixNdkPath) android.ndkPath = backfixNdkPath
-
-tasks.register('buildNative', Exec) {
-    inputs.dir rootProject.file('native')
-    inputs.property 'moduleVersionName', providers.gradleProperty('moduleVersionName')
-    inputs.property 'moduleVersionCode', providers.gradleProperty('moduleVersionCode')
-    inputs.property 'ndk', providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orElse('')
-    outputs.dir layout.buildDirectory.dir('native/libs')
-    doFirst {
-        def ndk = providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orNull
-        if (!ndk) throw new GradleException('Set ANDROID_NDK_HOME or -Pbackfix.ndk to Android NDK r29')
-        def executable = new File(ndk, System.getProperty('os.name').startsWith('Windows') ? 'ndk-build.cmd' : 'ndk-build')
-        workingDir rootProject.projectDir
-        commandLine executable.absolutePath, 'NDK_PROJECT_PATH=.',
-                'APP_BUILD_SCRIPT=native/jni/Android.mk', 'NDK_APPLICATION_MK=native/jni/Application.mk',
-                'NDK_OUT=app/build/native/obj', 'NDK_LIBS_OUT=app/build/native/libs',
-                "MODULE_VERSION=${providers.gradleProperty('moduleVersionName').get()}",
-                "MODULE_VERSION_CODE=${providers.gradleProperty('moduleVersionCode').get()}", '-j4'
-    }
-}
-tasks.named('preBuild').configure { dependsOn 'buildNative' }
+ext.backfixMinimal = false
+apply from: rootProject.file('gradle/native.gradle')
 
 dependencies {
     compileOnly 'io.github.libxposed:api:102.0.0'

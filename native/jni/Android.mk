@@ -7,6 +7,12 @@ LOCAL_CFLAGS := -DXZ_USE_CRC64 -DXZ_DEC_DYNALLOC -fvisibility=hidden -O2
 LOCAL_CPPFLAGS := -Wall -Wextra -Werror
 LOCAL_CPPFLAGS += -DMODULE_VERSION=\"$(MODULE_VERSION)\"
 LOCAL_CPPFLAGS += -DMODULE_VERSION_CODE=$(MODULE_VERSION_CODE)
-LOCAL_LDLIBS := -llog -ldl
 LOCAL_LDFLAGS := -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL
+ifeq ($(BACKFIX_MINIMAL),1)
+LOCAL_CFLAGS += -Oz -flto=thin -ffunction-sections -fdata-sections -DBACKFIX_STATUS_SERVER=0
+LOCAL_LDFLAGS += -flto=thin -Wl,--icf=safe
+else
+LOCAL_CFLAGS += -DBACKFIX_STATUS_SERVER=1
+endif
+LOCAL_LDLIBS := -llog -ldl
 include $(BUILD_SHARED_LIBRARY)

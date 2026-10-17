@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = 'HyosBackFix'
-include ':app'
+include ':app', ':minimal'

@@ -40,13 +40,17 @@ jobs:
           SIGNING_STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.SIGNING_STORE_PASSWORD || '' }}
           SIGNING_KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.SIGNING_KEY_ALIAS || '' }}
           SIGNING_KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.SIGNING_KEY_PASSWORD || '' }}
-        run: ./gradlew --no-daemon assembleDebug assembleRelease
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleRelease :minimal:assembleDebug :minimal:assembleRelease
       - name: Collect APKs
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/debug/*.apk dist/hyos-back-fix-debug.apk
           for apk in app/build/outputs/apk/release/*.apk; do
             cp "$apk" "dist/hyos-back-fix-${apk##*/}"
+          done
+          cp minimal/build/outputs/apk/debug/*.apk dist/hyos-back-fix-nogui-debug.apk
+          for apk in minimal/build/outputs/apk/release/*.apk; do
+            cp "$apk" "dist/hyos-back-fix-nogui-${apk##*/}"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -56,7 +60,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: hyos-back-fix-mapping-${{ github.run_number }}
-          path: app/build/outputs/mapping/release/mapping.txt
+          path: |
+            app/build/outputs/mapping/release/mapping.txt
+            minimal/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
       - name: Remove signing key
         if: always()

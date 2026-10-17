@@ -10,11 +10,14 @@ New-Item -ItemType Directory -Force $env:TEMP, $env:ANDROID_USER_HOME | Out-Null
 $env:GRADLE_OPTS = "-Djava.io.tmpdir=$($env:TEMP.Replace('\', '/'))"
 if ($SdkPath) { $env:ANDROID_HOME = $SdkPath }
 if ($NdkPath) { $env:ANDROID_NDK_HOME = $NdkPath }
-& .\gradlew.bat --no-daemon '-Pbackfix.localSigning=true' assembleRelease
+& .\gradlew.bat --no-daemon '-Pbackfix.localSigning=true' :app:assembleRelease :minimal:assembleRelease
 if ($LASTEXITCODE -ne 0) { throw "Gradle failed: $LASTEXITCODE" }
 New-Item -ItemType Directory -Force 'dist' | Out-Null
 $version = (Get-Content 'gradle.properties' | Where-Object { $_ -like 'moduleVersionName=*' }) -replace '^moduleVersionName=', ''
 $target = "dist/hyos-back-fix-$version.apk"
 Copy-Item 'app/build/outputs/apk/release/app-release.apk' $target -Force
 Write-Output "APK: $PSScriptRoot/$target"
+$minimalTarget = "dist/hyos-back-fix-$version-nogui.apk"
+Copy-Item 'minimal/build/outputs/apk/release/minimal-release.apk' $minimalTarget -Force
+Write-Output "APK (no GUI): $PSScriptRoot/$minimalTarget"
 

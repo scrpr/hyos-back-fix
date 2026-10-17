@@ -1,0 +1,9 @@
+HyperOS Back Fix minimal edition
+
+Project code: MIT, copyright 2026 scrpr. See hyos-back-fix-mit.txt.
+XZ Embedded: 0BSD. See xz-embedded.txt and https://github.com/tukaani-project/xz-embedded.
+libc++ (NDK static runtime): Apache-2.0 WITH LLVM-exception and included notices.
+See libcxx.txt and https://github.com/llvm/llvm-project.
+
+libxposed API is compile-only, provided by the framework, and not bundled.
+This edition does not bundle miuix, AndroidX, Compose, Kotlin, or kotlinx.coroutines.

@@ -1,0 +1,89 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'dev.scrpr.hyosbackfix'
+    compileSdk 36
+    buildToolsVersion '35.0.0'
+
+    defaultConfig {
+        applicationId 'dev.scrpr.hyosbackfix'
+        minSdk 36
+        targetSdk 36
+        versionCode providers.gradleProperty('moduleVersionCode').get().toInteger()
+        versionName providers.gradleProperty('moduleVersionName').get()
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    signingConfigs {
+        local {
+            storeFile rootProject.file('.local/debug.keystore')
+            storePassword 'android'
+            keyAlias 'hyos-back-fix'
+            keyPassword 'android'
+        }
+        release {
+            def path = providers.environmentVariable('SIGNING_STORE_FILE').orNull
+            if (path) {
+                storeFile file(path)
+                storePassword providers.environmentVariable('SIGNING_STORE_PASSWORD').get()
+                keyAlias providers.environmentVariable('SIGNING_KEY_ALIAS').get()
+                keyPassword providers.environmentVariable('SIGNING_KEY_PASSWORD').get()
+            }
+        }
+    }
+    buildTypes {
+        debug { signingConfig signingConfigs.local }
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), rootProject.file('app/proguard-rules.pro')
+            if (providers.environmentVariable('SIGNING_STORE_FILE').isPresent()) {
+                signingConfig signingConfigs.release
+            } else if (providers.gradleProperty('backfix.localSigning').orNull == 'true') {
+                signingConfig signingConfigs.local
+            }
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildFeatures {
+        buildConfig false
+        resValues false
+        aidl false
+        shaders false
+    }
+    sourceSets.main {
+        java {
+            srcDirs = [rootProject.file('app/src/main/java')]
+            include '**/BackFixModule.java'
+        }
+        resources {
+            srcDirs = [rootProject.file('app/src/main/resources'), 'src/main/resources']
+            exclude 'META-INF/licenses/miuix-apache-2.0.txt', 'META-INF/licenses/THIRD_PARTY_NOTICES.md'
+        }
+        jniLibs.srcDir layout.buildDirectory.dir('native/libs')
+    }
+    // HyperOS Runtime injection dlopens base.apk!/lib/... directly: the ELF must be stored.
+    packaging.jniLibs.useLegacyPackaging = false
+    packaging.dex.useLegacyPackaging = true
+}
+
+ext.backfixMinimal = true
+apply from: rootProject.file('gradle/native.gradle')
+
+dependencies {
+    // Framework-provided: no runtime Java/Kotlin/AndroidX dependencies in the APK.
+    compileOnly 'io.github.libxposed:api:102.0.0'
+}
+
+// One shared keystore and key generation task for both APKs.
+tasks.configureEach {
+    if (name == 'validateSigningDebug' ||
+            (name == 'validateSigningRelease' && android.buildTypes.release.signingConfig == android.signingConfigs.local)) {
+        dependsOn ':app:prepareLocalSigning'
+    }
+}
