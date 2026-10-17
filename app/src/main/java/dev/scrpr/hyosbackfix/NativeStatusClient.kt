@@ -10,7 +10,8 @@ import java.net.SocketTimeoutException
 import java.util.UUID
 
 object NativeStatusClient {
-    fun query(homeUid: Int, debugLogging: Boolean? = null): NativeStatus {
+    fun query(homeUid: Int, debugLogging: Boolean? = null, noReuseEnabled: Boolean? = null): NativeStatus {
+        require(debugLogging == null || noReuseEnabled == null) { "每次只能更新一个设置" }
         val user = homeUid / 100000
         require(user in 0..22775) { "不支持的用户编号" }
         val nonce = UUID.randomUUID().toString().replace("-", "")
@@ -19,7 +20,11 @@ object NativeStatusClient {
             // Numeric loopback only: no DNS, proxy, external network, or root.
             socket.connect(InetSocketAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1)),
                 42760 + user), 700)
-            val action = when (debugLogging) { null -> "?"; true -> "1"; false -> "0" }
+            val action = when {
+                noReuseEnabled != null -> if (noReuseEnabled) "R" else "r"
+                debugLogging != null -> if (debugLogging) "1" else "0"
+                else -> "?"
+            }
             socket.getOutputStream().write("${NativeStatus.PROTOCOL} $nonce $action\n".toByteArray(Charsets.US_ASCII))
             val input = socket.getInputStream()
             val output = ByteArrayOutputStream()

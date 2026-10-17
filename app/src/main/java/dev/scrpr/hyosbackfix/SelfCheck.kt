@@ -31,12 +31,13 @@ data class CheckReport(
             appendLine("guard=${it.guard} remote=${it.remote} remoteBack=${it.remoteBack} merge=${it.merge}")
             appendLine("补丁页数: ${it.pages} · 页大小: ${it.pageSize}")
             appendLine("调试日志: ${if (it.debugLogging) "开启" else "关闭"}")
+            appendLine("禁用启动复用: ${it.noReuseEnabled} · Hook: ${it.noReuse}")
         }
     }
 }
 
 object SelfCheck {
-    suspend fun run(context: Context, debugLogging: Boolean? = null): CheckReport = withContext(Dispatchers.IO) {
+    suspend fun run(context: Context, debugLogging: Boolean? = null, noReuseEnabled: Boolean? = null): CheckReport = withContext(Dispatchers.IO) {
         val items = mutableListOf<CheckItem>()
         val arm64 = "arm64-v8a" in Build.SUPPORTED_ABIS
         val home = try { context.packageManager.getPackageInfo("com.miui.home", 0) }
@@ -49,7 +50,7 @@ object SelfCheck {
         if (!arm64 || home == null) return@withContext CheckReport("环境不支持",
             if (!arm64) "需要 ARM64 设备" else "未找到系统桌面", CheckState.FAILED, items)
         val homeUid = requireNotNull(home.applicationInfo).uid
-        val status = try { NativeStatusClient.query(homeUid, debugLogging) }
+        val status = try { NativeStatusClient.query(homeUid, debugLogging, noReuseEnabled) }
         catch (error: IOException) {
             return@withContext CheckReport("未连接", "请确认模块已启用，并重启系统桌面。",
                 CheckState.UNAVAILABLE, items, connectionDetail = "${error.javaClass.simpleName}: ${error.message}")

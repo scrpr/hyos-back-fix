@@ -28,13 +28,15 @@ This module fixes the issue by routing the Back button in three-button navigatio
 
 | 版本 | 内容 | APK 文件 |
 | --- | --- | --- |
-| GUI 版 | 可以查看注入状态，可以打开调试日志，体积较大 | `hyos-back-fix-x.x.x.apk` |
-| 无 GUI 版 | 无法打开调试日志，体积较小 | `hyos-back-fix-x.x.x-nogui.apk` |
+| GUI 版 | 可查看状态、开关窗口复用修复和调试日志 | `hyos-back-fix-x.x.x.apk` |
+| 无 GUI 版 | 窗口复用修复始终开启，无设置界面 | `hyos-back-fix-x.x.x-nogui.apk` |
 
 | Edition | Features | APK file |
 | --- | --- | --- |
-| GUI | View injection status and enable debug logging; larger APK | `hyos-back-fix-x.x.x.apk` |
-| No GUI | Debug logging cannot be enabled; smaller APK | `hyos-back-fix-x.x.x-nogui.apk` |
+| GUI | View status; toggle window-reuse fix and debug logging | `hyos-back-fix-x.x.x.apk` |
+| No GUI | Window-reuse fix always on; no settings UI | `hyos-back-fix-x.x.x-nogui.apk` |
+
+“禁用窗口复用”默认开启，修改立即生效，重启后保留。
 
 ## 开发 / Development
 

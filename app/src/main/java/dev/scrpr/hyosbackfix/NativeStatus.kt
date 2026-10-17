@@ -13,9 +13,13 @@ data class NativeStatus(
     val pages: Int,
     val pageSize: Long,
     val debugLogging: Boolean,
+    val noReuse: Boolean = false,
+    val noReuseEnabled: Boolean? = null,
 ) {
-    val installed get() = stage == "installed" && guard && remote && remoteBack && merge && pages > 0
-    val failed get() = stage.endsWith("_failed") || (stage == "installed" && !installed)
+    private val reuseReady get() = noReuseEnabled == false || noReuse
+    val installed get() = (stage == "installed" || stage == "no_reuse_failed") &&
+        guard && remote && remoteBack && merge && pages > 0 && reuseReady
+    val failed get() = (stage.endsWith("_failed") && !installed) || (stage == "installed" && !installed)
 
     val stageLabel get() = when (stage) {
         "waiting_runtime" -> "等待桌面运行时"
@@ -24,6 +28,7 @@ data class NativeStatus(
         "reclaim_failed" -> "回收保护安装失败"
         "runner_failed" -> "返回入口安装失败"
         "merge_failed" -> "动画入口安装失败"
+        "no_reuse_failed" -> "禁用窗口复用失败"
         "installed" -> if (installed) "安装完成" else "安装结果不完整"
         else -> "未知安装阶段"
     }
@@ -51,11 +56,12 @@ data class NativeStatus(
             val result = NativeStatus(value("version"), value("versionCode").toLong(),
                 value("pid").toInt(), value("stage"), flag("guard"), flag("remote"),
                 flag("remoteBack"), flag("merge"), value("pages").toInt(), value("pageSize").toLong(),
-                flag("debugLogging"))
+                flag("debugLogging"), fields["noReuse"]?.let { flag("noReuse") } ?: false,
+                fields["noReuseEnabled"]?.let { flag("noReuseEnabled") })
             require(result.version.isNotBlank() && result.versionCode > 0 && result.pid > 0 &&
                 result.pages >= 0 && result.pageSize > 0) { "报告数值无效" }
             require(result.stage in setOf("waiting_runtime", "waiting_launcher", "waiting_merge",
-                "reclaim_failed", "runner_failed", "merge_failed", "installed")) { "未知安装阶段" }
+                "reclaim_failed", "runner_failed", "merge_failed", "no_reuse_failed", "installed")) { "未知安装阶段" }
             return result
         }
     }

@@ -80,6 +80,7 @@ private fun BackFixScreen(context: Context) {
     var running by remember { mutableStateOf(true) }
     var copied by remember { mutableStateOf(false) }
     var changingDebug by remember { mutableStateOf(false) }
+    var changingReuse by remember { mutableStateOf(false) }
     var page by rememberSaveable { mutableStateOf("home") }
     suspend fun refresh(showProgress: Boolean) {
         if (!checkMutex.tryLock()) return
@@ -125,6 +126,21 @@ private fun BackFixScreen(context: Context) {
             }
         }
     }
+    val setNoReuse: (Boolean) -> Unit = { enabled ->
+        changingReuse = true
+        scope.launch {
+            try {
+                checkMutex.withLock {
+                    report = SelfCheck.run(context, noReuseEnabled = enabled)
+                    if (report?.native?.noReuseEnabled != enabled) {
+                        Toast.makeText(context, "保存失败，请重试", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } finally {
+                changingReuse = false
+            }
+        }
+    }
     PageTransition(page = page, onBack = { page = "home" }) { currentPage ->
         Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp).padding(top = if (currentPage == "home") 36.dp else 16.dp, bottom = 24.dp),
@@ -135,6 +151,15 @@ private fun BackFixScreen(context: Context) {
             when (currentPage) {
                 "home" -> {
                     StatusCard(report, running, onRefresh = { scope.launch { refresh(true) } })
+                    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
+                        SuperSwitch(title = "禁用窗口复用",
+                            summary = "开启后从桌面打开的应用响应返回的速度会更快，但可能导致动画不连贯",
+                            checked = report?.native?.noReuseEnabled ?: true,
+                            enabled = report?.native?.noReuseEnabled != null && report?.state != CheckState.RESTART
+                                && !running && !changingReuse && !changingDebug,
+                            onCheckedChange = setNoReuse,
+                            insideMargin = PaddingValues(horizontal = 24.dp, vertical = 18.dp))
+                    }
                     Section {
                         report?.items?.forEachIndexed { index, item ->
                             if (index > 0) Spacer(Modifier.height(24.dp))
@@ -153,7 +178,7 @@ private fun BackFixScreen(context: Context) {
                                 else "写入 Xposed 日志\n重启桌面后自动关闭",
                             checked = report?.native?.debugLogging == true,
                             enabled = report?.native != null && report?.state != CheckState.RESTART
-                                && !running && !changingDebug,
+                                && !running && !changingDebug && !changingReuse,
                             onCheckedChange = setDebugLogging,
                             insideMargin = PaddingValues(horizontal = 24.dp, vertical = 18.dp))
                     }
@@ -170,6 +195,8 @@ private fun BackFixScreen(context: Context) {
                             Info("ForRemoteBack", hookState(native.remoteBack, native))
                             Spacer(Modifier.height(20.dp))
                             Info("动画业务", hookState(native.merge, native))
+                            Spacer(Modifier.height(20.dp))
+                            Info("禁用窗口复用", if (native.noReuseEnabled == false) "已关闭" else hookState(native.noReuse, native))
                             Spacer(Modifier.height(20.dp))
                             Info("回收保护", hookState(native.guard, native))
                             Spacer(Modifier.height(20.dp))

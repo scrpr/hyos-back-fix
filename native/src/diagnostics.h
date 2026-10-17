@@ -1,5 +1,6 @@
 #pragma once
 #include "logging.h"
+#include "no_reuse.h"
 #include <unistd.h>
 
 #ifndef BACKFIX_STATUS_SERVER
@@ -18,7 +19,7 @@
 #include <time.h>
 #endif
 
-// Process-owned diagnostics and a debug-only toggle. No JNI, shell, root, or disk cache.
+// Process-owned diagnostics and GUI settings. No JNI or root required.
 // Keep this protocol and port calculation in sync with NativeStatusClient.kt.
 namespace diagnostics {
 #if BACKFIX_STATUS_SERVER
@@ -33,32 +34,32 @@ inline long long elapsedMillis() {
 #endif
 
 inline void publish(const char *stage, bool guard, bool remote, bool remoteBack,
-                    bool merge, size_t pages) {
+                    bool merge, size_t pages, bool noReuse) {
 #if BACKFIX_STATUS_SERVER
     char report[1024];
     snprintf(report, sizeof(report),
             "version=" MODULE_VERSION "\nversionCode=%d\nuid=%u\npid=%d\nstage=%s\n"
-            "guard=%d\nremote=%d\nremoteBack=%d\nmerge=%d\npages=%zu\npageSize=%ld\n",
+            "guard=%d\nremote=%d\nremoteBack=%d\nmerge=%d\npages=%zu\npageSize=%ld\nnoReuse=%d\n",
             MODULE_VERSION_CODE, getuid(), getpid(), stage, guard, remote, remoteBack,
-            merge, pages, sysconf(_SC_PAGESIZE));
+            merge, pages, sysconf(_SC_PAGESIZE), noReuse);
     {
         std::lock_guard<std::mutex> lock(snapshotMutex);
         snapshot = report;
     }
 #endif
     logging::installation(ANDROID_LOG_INFO,
-            "status pid=%d version=" MODULE_VERSION " stage=%s guard=%d remote=%d remoteBack=%d merge=%d pages=%zu pageSize=%ld",
-            getpid(), stage, guard, remote, remoteBack, merge, pages, sysconf(_SC_PAGESIZE));
+            "status pid=%d version=" MODULE_VERSION " stage=%s guard=%d remote=%d remoteBack=%d merge=%d pages=%zu pageSize=%ld noReuse=%d",
+            getpid(), stage, guard, remote, remoteBack, merge, pages, sysconf(_SC_PAGESIZE), noReuse);
 }
 
 #if BACKFIX_STATUS_SERVER
 inline void serveClient(int client) {
-    // One bounded request/reply. Only debug verbosity is mutable, never Hook behavior.
+    // One bounded request/reply. R/r persistently enable/disable launch-reuse prevention.
     timeval timeout{0, 250000};
     if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ||
         setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))) return;
     constexpr char prefix[] = "HYOS_BACK_FIX_STATUS/2 ";
-    // A 32-digit nonce, space, then '?' (query), '0' or '1' (set debug).
+    // A 32-digit nonce, space, then '?' (query), '0'/'1' (debug), or 'r'/'R' (reuse).
     constexpr size_t length = sizeof(prefix) - 1 + 32 + 3;
     char request[length + 1]{};
     size_t received = 0;
@@ -75,8 +76,10 @@ inline void serveClient(int client) {
         if (!((request[i] >= '0' && request[i] <= '9') ||
               (request[i] >= 'a' && request[i] <= 'f'))) return;
     const char action = request[length - 2];
-    if (request[length - 3] != ' ' || (action != '?' && action != '0' && action != '1')) return;
-    if (action != '?') logging::setDebugEnabled(action == '1');
+    if (request[length - 3] != ' ' || (action != '?' && action != '0' && action != '1'
+            && action != 'r' && action != 'R')) return;
+    if (action == '0' || action == '1') logging::setDebugEnabled(action == '1');
+    if (action == 'r' || action == 'R') window_reuse::setEnabled(action == 'R');
     // Echo only the protocol and nonce; the resulting state is in debugLogging.
     std::string reply(request, sizeof(prefix) - 1 + 32);
     reply += '\n';
@@ -85,6 +88,7 @@ inline void serveClient(int client) {
         reply += snapshot;
     }
     reply += std::string("debugLogging=") + (logging::isDebugEnabled() ? "1\n" : "0\n");
+    reply += "noReuseEnabled=" + std::to_string(noReuseEnabled.load(std::memory_order_acquire)) + "\n";
     reply += "elapsedMs=" + std::to_string(elapsedMillis()) + "\nend\n";
     size_t sent = 0;
     while (sent < reply.size()) {

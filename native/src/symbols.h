@@ -8,10 +8,11 @@
 #include "xz.h"
 
 // The linker names an uncompressed APK library as APK!/entry.
-inline std::vector<uint8_t> readImage(const char *path) {
+inline std::vector<uint8_t> readImage(const char *path, size_t *imageOffset = nullptr) {
     std::string name(path);
     size_t separator = name.find("!/");
     FILE *file = fopen(name.substr(0, separator).c_str(), "rb");
+    if (!file) return {};
     fseeko(file, 0, SEEK_END);
     size_t size = ftello(file);
     std::vector<uint8_t> data(size);
@@ -30,6 +31,7 @@ inline std::vector<uint8_t> readImage(const char *path) {
         if (entry == std::string(reinterpret_cast<char *>(data.data()+central+46), length)) {
             size_t local = u32(central+42);
             size_t start = local+30+u16(local+26)+u16(local+28);
+            if (imageOffset) *imageOffset = start;
             return {data.begin()+start, data.begin()+start+u32(central+24)};
         }
         central += 46+length+u16(central+30)+u16(central+32);
@@ -39,6 +41,8 @@ inline std::vector<uint8_t> readImage(const char *path) {
 
 class Symbols {
     uintptr_t base;
+    size_t imageOffset = 0;
+    std::vector<Elf64_Phdr> segments;
     std::vector<uint8_t> data;
     const Elf64_Shdr *sections() const {
         auto *header = reinterpret_cast<const Elf64_Ehdr *>(data.data());
@@ -46,8 +50,11 @@ class Symbols {
     }
 public:
     struct Symbol { uintptr_t address; size_t size; };
-    Symbols(uintptr_t address, const char *path) : base(address), data(readImage(path)) {
+    Symbols(uintptr_t address, const char *path) : base(address), data(readImage(path, &imageOffset)) {
+        if (data.empty()) return;
         auto *header = reinterpret_cast<const Elf64_Ehdr *>(data.data());
+        auto *programs = reinterpret_cast<const Elf64_Phdr *>(data.data()+header->e_phoff);
+        segments.assign(programs, programs+header->e_phnum);
         const auto *table = sections();
         const char *names = reinterpret_cast<const char *>(data.data()+table[header->e_shstrndx].sh_offset);
         for (unsigned i=0; i<header->e_shnum; ++i) {
@@ -71,7 +78,16 @@ public:
             break;
         }
     }
-    Symbol find(std::initializer_list<const char *> parts) const {
+    size_t fileOffset(Symbol symbol) const {
+        for (const auto &segment : segments)
+            if (segment.p_type == PT_LOAD && (segment.p_flags & PF_X)
+                    && symbol.address >= base+segment.p_vaddr
+                    && symbol.address-base-segment.p_vaddr < segment.p_filesz)
+                return imageOffset+segment.p_offset+symbol.address-base-segment.p_vaddr;
+        return 0;
+    }
+    Symbol find(std::initializer_list<const char *> parts, bool exact = false) const {
+        if (data.empty()) return {};
         auto *header = reinterpret_cast<const Elf64_Ehdr *>(data.data());
         const auto *table = sections();
         for (unsigned i=0; i<header->e_shnum; ++i) {
@@ -80,7 +96,8 @@ public:
             const char *strings = reinterpret_cast<const char *>(data.data()+table[table[i].sh_link].sh_offset);
             for (size_t j=0; j<table[i].sh_size/sizeof(Elf64_Sym); ++j) {
                 bool matches = true;
-                for (const char *part : parts) matches &= strstr(strings+symbols[j].st_name, part) != nullptr;
+                for (const char *part : parts) matches &= exact ? !strcmp(strings+symbols[j].st_name, part)
+                                 : strstr(strings+symbols[j].st_name, part) != nullptr;
                 if (matches && symbols[j].st_shndx != SHN_UNDEF)
                     return {base+symbols[j].st_value, size_t(symbols[j].st_size)};
             }

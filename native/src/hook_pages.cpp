@@ -17,7 +17,7 @@ using Madvise = int (*)(void *, size_t, int);
 std::atomic<Madvise> originalMadvise;
 struct PageState {
     std::mutex lock;
-    uintptr_t pages[6]{};
+    uintptr_t pages[8]{}; // Four entries, each potentially crossing a page boundary.
     size_t count = 0;
     const size_t size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
 };

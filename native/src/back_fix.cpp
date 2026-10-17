@@ -5,12 +5,17 @@
 #include "symbols.h"
 #include "rust_wake.h"
 #include "merge_business.h"
+#include "no_reuse.h"
 #include "hook_pages.h"
 #include "diagnostics.h"
 
 extern "C" {
 std::atomic<uint32_t> mergeKeyRequests{0};
 std::atomic<uint32_t> mergePrepared{0};
+#if BACKFIX_STATUS_SERVER
+std::atomic<uint32_t> noReuseEnabled{1};
+uintptr_t originalNoReuse;
+#endif
 int32_t mergeInterruptOffset;
 uintptr_t originalMergeBusiness;
 void prepareMergeBusiness();
@@ -37,10 +42,14 @@ std::once_flag installation;
 bool guardInstalled, installationFailed, nativeInstalled, mergeInstalled;
 bool remoteInstalled, remoteBackInstalled;
 bool nativeAttempted, mergeAttempted;
+bool noReuseInstalled;
+#if !BACKFIX_STATUS_SERVER
+void *originalNoReuse;
+#endif
 
 void report(const char *stage) {
     diagnostics::publish(stage, guardInstalled, remoteInstalled, remoteBackInstalled,
-                         mergeInstalled, hook_pages::count());
+                         mergeInstalled, hook_pages::count(), noReuseInstalled);
 }
 
 template<class T> T load(uintptr_t address) {
@@ -204,6 +213,9 @@ void start() {
     fclose(file);
     if (strcmp(process, "com.miui.home")) return;
     std::call_once(installation, [] {
+#if BACKFIX_STATUS_SERVER
+        window_reuse::loadConfig();
+#endif
         logging::installation(ANDROID_LOG_INFO, "native installer started version=" MODULE_VERSION);
         report("waiting_runtime");
         diagnostics::start();
@@ -219,15 +231,27 @@ void start() {
                         mergeInstalled = hook_pages::hook(hookFunction, mergeTarget, reinterpret_cast<void *>(prepareMergeBusiness),
                                 reinterpret_cast<void **>(&originalMergeBusiness)) == 0;
                         mergeAttempted = true;
-                        report(!nativeInstalled ? "runner_failed" : mergeInstalled ? "installed" : "merge_failed");
+                        auto reuseTarget = window_reuse::findLoaded();
+                        if (reuseTarget) {
+                            noReuseInstalled = hook_pages::hook(hookFunction,
+                                    reinterpret_cast<void *>(reuseTarget),
+                                    reinterpret_cast<void *>(disableWindowReuse),
+                                    reinterpret_cast<void **>(&originalNoReuse)) == 0;
+                        }
+                        logging::installation(noReuseInstalled ? ANDROID_LOG_INFO : ANDROID_LOG_ERROR,
+                                "window-reuse hook installed=%d target=%p resolver=elf-symbols version=" MODULE_VERSION,
+                                noReuseInstalled, reinterpret_cast<void *>(reuseTarget));
+                        report(!nativeInstalled ? "runner_failed" : !mergeInstalled ? "merge_failed"
+                                : noReuseInstalled ? "installed" : "no_reuse_failed");
                     }
                 }
                 if (nativeAttempted && mergeAttempted) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
             }
             logging::installation(ANDROID_LOG_INFO,
-                    "native hook %s version=" MODULE_VERSION " merge_bridge=%d reclaim_guard=1 hook_pages=%zu",
-                    nativeInstalled && mergeInstalled ? "installed" : "incomplete", mergeInstalled, hook_pages::count());
+                    "native hook %s version=" MODULE_VERSION " merge_bridge=%d no_reuse=%d reclaim_guard=1 hook_pages=%zu",
+                    nativeInstalled && mergeInstalled && noReuseInstalled ? "installed" : "incomplete",
+                    mergeInstalled, noReuseInstalled, hook_pages::count());
         }).detach();
     });
 }
