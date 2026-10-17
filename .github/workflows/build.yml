@@ -17,15 +17,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '27'
           cache: gradle
+      - name: Set up Android SDK tools
+        uses: android-actions/setup-android@v4
       - name: Install Android SDK and NDK
         run: |
-          sdkmanager "platforms;android-36" "build-tools;35.0.0" "ndk;29.0.14206865"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865" >> "$GITHUB_ENV"
+          sdkmanager "platforms;android-36" "build-tools;37.0.0" "ndk;30.0.16248370"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
       - name: Prepare release signing
         if: github.event_name != 'pull_request'
         env:

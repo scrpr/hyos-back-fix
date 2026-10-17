@@ -1,13 +1,12 @@
 plugins {
     id 'com.android.application'
-    id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
 android {
     namespace 'dev.scrpr.hyosbackfix'
     compileSdk 36
-    buildToolsVersion '35.0.0'
+    buildToolsVersion '37.0.0'
 
     defaultConfig {
         applicationId 'dev.scrpr.hyosbackfix'
@@ -54,9 +53,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = '17' }
     buildFeatures { compose true; buildConfig true }
-    sourceSets.main.jniLibs.srcDir layout.buildDirectory.dir('native/libs')
     packaging.jniLibs.keepDebugSymbols += '**/libhyosbackfix.so'
 }
 

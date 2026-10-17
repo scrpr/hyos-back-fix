@@ -1,18 +1,22 @@
 // Each APK owns its NDK output, so GUI/minimal builds cannot reuse each other's objects.
 def backfixNdkPath = providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orNull
-android.ndkVersion = '29.0.14206865'
+android.ndkVersion = '30.0.16248370'
 if (backfixNdkPath) android.ndkPath = backfixNdkPath
 
-tasks.register('buildNative', Exec) {
+def backfixNativeLibraries = objects.directoryProperty()
+backfixNativeLibraries.set(layout.buildDirectory.dir('native/libs'))
+
+def backfixNativeTask = tasks.register('buildNative', Exec) {
+    ext.nativeLibraries = backfixNativeLibraries
     inputs.dir rootProject.file('native')
     inputs.property 'moduleVersionName', providers.gradleProperty('moduleVersionName')
     inputs.property 'moduleVersionCode', providers.gradleProperty('moduleVersionCode')
     inputs.property 'minimal', project.backfixMinimal
     inputs.property 'ndk', providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orElse('')
-    outputs.dir layout.buildDirectory.dir('native/libs')
+    outputs.dir backfixNativeLibraries
     doFirst {
         def ndk = providers.gradleProperty('backfix.ndk').orElse(providers.environmentVariable('ANDROID_NDK_HOME')).orNull
-        if (!ndk) throw new GradleException('Set ANDROID_NDK_HOME or -Pbackfix.ndk to Android NDK r29')
+        if (!ndk) throw new GradleException('Set ANDROID_NDK_HOME or -Pbackfix.ndk to Android NDK r30')
         def executable = new File(ndk, System.getProperty('os.name').startsWith('Windows') ? 'ndk-build.cmd' : 'ndk-build')
         workingDir rootProject.projectDir
         commandLine executable.absolutePath, 'NDK_PROJECT_PATH=.',
@@ -26,3 +30,7 @@ tasks.register('buildNative', Exec) {
 }
 
 tasks.named('preBuild').configure { dependsOn 'buildNative' }
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    variant.sources.jniLibs.addGeneratedSourceDirectory(backfixNativeTask) { task -> task.nativeLibraries }
+}

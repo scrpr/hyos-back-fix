@@ -4,8 +4,9 @@ plugins {
 
 android {
     namespace 'dev.scrpr.hyosbackfix'
+    enableKotlin = false
     compileSdk 36
-    buildToolsVersion '35.0.0'
+    buildToolsVersion '37.0.0'
 
     defaultConfig {
         applicationId 'dev.scrpr.hyosbackfix'
@@ -65,7 +66,6 @@ android {
             srcDirs = [rootProject.file('app/src/main/resources'), 'src/main/resources']
             exclude 'META-INF/licenses/miuix-apache-2.0.txt', 'META-INF/licenses/THIRD_PARTY_NOTICES.md'
         }
-        jniLibs.srcDir layout.buildDirectory.dir('native/libs')
     }
     // HyperOS Runtime injection dlopens base.apk!/lib/... directly: the ELF must be stored.
     packaging.jniLibs.useLegacyPackaging = false
