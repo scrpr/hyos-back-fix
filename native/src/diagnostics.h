@@ -1,36 +1,133 @@
 #pragma once
+#include "logging.h"
+#include <unistd.h>
+
+#ifndef BACKFIX_STATUS_SERVER
+#define BACKFIX_STATUS_SERVER 1
+#endif
+
+#if BACKFIX_STATUS_SERVER
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
-#include <unistd.h>
-#include <sys/stat.h>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <time.h>
+#endif
 
-// Native diagnostics only: logcat plus a private snapshot for manual inspection.
-// A snapshot can outlive its process; PID/start identify which process wrote it.
+// Process-owned diagnostics and a debug-only toggle. No JNI, shell, root, or disk cache.
+// Keep this protocol and port calculation in sync with NativeStatusClient.kt.
 namespace diagnostics {
+#if BACKFIX_STATUS_SERVER
+inline std::mutex snapshotMutex;
+inline std::string snapshot;
+
+inline long long elapsedMillis() {
+    timespec now{};
+    clock_gettime(CLOCK_BOOTTIME, &now);
+    return static_cast<long long>(now.tv_sec) * 1000 + now.tv_nsec / 1000000;
+}
+#endif
+
 inline void publish(const char *stage, bool guard, bool remote, bool remoteBack,
                     bool merge, size_t pages) {
-    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
+#if BACKFIX_STATUS_SERVER
+    char report[1024];
+    snprintf(report, sizeof(report),
+            "version=" MODULE_VERSION "\nversionCode=%d\nuid=%u\npid=%d\nstage=%s\n"
+            "guard=%d\nremote=%d\nremoteBack=%d\nmerge=%d\npages=%zu\npageSize=%ld\n",
+            MODULE_VERSION_CODE, getuid(), getpid(), stage, guard, remote, remoteBack,
+            merge, pages, sysconf(_SC_PAGESIZE));
+    {
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        snapshot = report;
+    }
+#endif
+    logging::installation(ANDROID_LOG_INFO,
             "status pid=%d version=" MODULE_VERSION " stage=%s guard=%d remote=%d remoteBack=%d merge=%d pages=%zu pageSize=%ld",
             getpid(), stage, guard, remote, remoteBack, merge, pages, sysconf(_SC_PAGESIZE));
-    char stat[4096]{};
-    FILE *file = fopen("/proc/self/stat", "r");
-    if (!file) return;
-    auto *read = fgets(stat, sizeof(stat), file);
-    fclose(file);
-    if (!read) return;
-    char *cursor = strrchr(stat, ')') + 2, *save = nullptr, *start = nullptr;
-    for (int field = 3; field <= 22; ++field)
-        start = strtok_r(field == 3 ? cursor : nullptr, " ", &save);
-    char directory[192], path[256], temporary[272];
-    snprintf(directory, sizeof(directory), "/data/user/%u/com.miui.home/files", getuid()/100000);
-    mkdir(directory, 0700);
-    snprintf(path, sizeof(path), "%s/hyos-back-fix.status", directory);
-    snprintf(temporary, sizeof(temporary), "%s.tmp", path);
-    file = fopen(temporary, "w");
-    if (!file) return; // Diagnostics availability never changes native behavior.
-    fprintf(file, "pid=%d\nstart=%s\nversion=" MODULE_VERSION "\nstage=%s\nguard=%d\nremote=%d\nremoteBack=%d\nmerge=%d\npages=%zu\npageSize=%ld\n",
-            getpid(), start, stage, guard, remote, remoteBack, merge, pages, sysconf(_SC_PAGESIZE));
-    fclose(file);
-    rename(temporary, path);
 }
+
+#if BACKFIX_STATUS_SERVER
+inline void serveClient(int client) {
+    // One bounded request/reply. Only debug verbosity is mutable, never Hook behavior.
+    timeval timeout{0, 250000};
+    if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) ||
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout))) return;
+    constexpr char prefix[] = "HYOS_BACK_FIX_STATUS/2 ";
+    // A 32-digit nonce, space, then '?' (query), '0' or '1' (set debug).
+    constexpr size_t length = sizeof(prefix) - 1 + 32 + 3;
+    char request[length + 1]{};
+    size_t received = 0;
+    auto deadline = elapsedMillis() + 500;
+    while (received < length && elapsedMillis() < deadline) {
+        auto count = recv(client, request + received, length - received, 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return;
+        received += count;
+    }
+    if (received != length || strncmp(request, prefix, sizeof(prefix) - 1) ||
+        request[length - 1] != '\n') return;
+    for (size_t i = sizeof(prefix) - 1; i < sizeof(prefix) - 1 + 32; ++i)
+        if (!((request[i] >= '0' && request[i] <= '9') ||
+              (request[i] >= 'a' && request[i] <= 'f'))) return;
+    const char action = request[length - 2];
+    if (request[length - 3] != ' ' || (action != '?' && action != '0' && action != '1')) return;
+    if (action != '?') logging::setDebugEnabled(action == '1');
+    // Echo only the protocol and nonce; the resulting state is in debugLogging.
+    std::string reply(request, sizeof(prefix) - 1 + 32);
+    reply += '\n';
+    {
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        reply += snapshot;
+    }
+    reply += std::string("debugLogging=") + (logging::isDebugEnabled() ? "1\n" : "0\n");
+    reply += "elapsedMs=" + std::to_string(elapsedMillis()) + "\nend\n";
+    size_t sent = 0;
+    while (sent < reply.size()) {
+        auto count = send(client, reply.data() + sent, reply.size() - sent, MSG_NOSIGNAL);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) return;
+        sent += count;
+    }
+}
+
+inline void start() {
+    // Android user profiles get separate endpoints. Never bind INADDR_ANY.
+    unsigned user = getuid() / 100000;
+    if (user > 22775) return;
+    std::thread([user] {
+        int listener = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (listener < 0) return;
+        int reuse = 1;
+        setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = htons(42760 + user);
+        if (bind(listener, reinterpret_cast<sockaddr *>(&address), sizeof(address)) ||
+            listen(listener, 4)) {
+            BACKFIX_DEBUG_LOG(ANDROID_LOG_WARN,
+                    "diagnostics endpoint unavailable errno=%d", errno);
+            close(listener);
+            return; // Diagnostics availability never changes installation.
+        }
+        for (;;) {
+            int client = accept4(listener, nullptr, nullptr, SOCK_CLOEXEC);
+            if (client < 0) {
+                if (errno == EINTR || errno == ECONNABORTED) continue;
+                break;
+            }
+            serveClient(client);
+            close(client);
+        }
+        close(listener);
+    }).detach();
+}
+#else
+inline void start() {} // No status endpoint or diagnostics thread in the minimal APK.
+#endif
 }

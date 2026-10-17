@@ -1,4 +1,3 @@
-#include <android/log.h>
 #include <atomic>
 #include <dlfcn.h>
 #include <link.h>
@@ -63,7 +62,7 @@ void finishOpen() {
     }
     dropFinish(future);
     rust_wake::release(wake);
-    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "finish returned state=%d", load<int>(manager+64));
+    BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "finish returned state=%d", load<int>(manager+64));
 }
 
 void gestureBack() {
@@ -75,7 +74,7 @@ void gestureBack() {
     uintptr_t helper[2]{};
     backStart(helper, 0, 0.0f, 0.0f);
     void *callback = backCallback(reinterpret_cast<void *>(helper[1]));
-    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "gesture start navigation=%d callback=%d state=%d",
+    BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "gesture start navigation=%d callback=%d state=%d",
             helper[1] != 0, callback != nullptr, load<int>(manager+64));
 
     bool merge = (mergeAnimationSupport() & 1) != 0;
@@ -86,13 +85,13 @@ void gestureBack() {
     bool accepted = (breakOpen(merge) & 1) != 0;
     if (merge) mergeKeyRequests.fetch_sub(1, std::memory_order_release);
     bool prepared = merge && mergePrepared.load(std::memory_order_acquire);
-    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "gesture business mode=%s accepted=%d prepared=%d state=%d",
+    BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "gesture business mode=%s accepted=%d prepared=%d state=%d",
             merge ? "merge" : "default", accepted, prepared, load<int>(manager+64));
     if (!merge && accepted) {
         backCancel(helper);
         if (callback) dropCallback(callback);
         dropRuntime(guard);
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "gesture consumed by default break-open");
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "gesture consumed by default break-open");
         return;
     }
     if (!merge && load<uint8_t>(manager+73)) finishOpen();
@@ -101,9 +100,9 @@ void gestureBack() {
     bool fallback = !callback && prepared && accepted && load<int>(manager+64) == 3;
     if (fallback) {
         if (helper[1]) backCancel(helper);
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "gesture fallback: merge handoff complete");
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "gesture fallback: merge handoff complete");
     } else if (!callback) {
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "navigation pending: await application navigation");
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "navigation pending: await application navigation");
         auto started = std::chrono::steady_clock::now();
         unsigned attempts = 0;
         do {
@@ -117,18 +116,18 @@ void gestureBack() {
             backCancel(helper);
             if (callback) dropCallback(callback);
             dropRuntime(guard);
-            __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "navigation cancelled: closing transition");
+            BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "navigation cancelled: closing transition");
             return;
         }
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "navigation ready attempts=%u wait_ms=%lld state=%d",
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "navigation ready attempts=%u wait_ms=%lld state=%d",
                 attempts, static_cast<long long>(elapsed), load<int>(manager+64));
     }
     if (callback) dropCallback(callback);
     backInvoke(reinterpret_cast<void *>(helper[1]));
     if (helper[1]) dropBackInfo(reinterpret_cast<void *>(helper[1]));
     dropRuntime(guard);
-    __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "gesture invoke returned path=%s state=%d",
+    BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "gesture invoke returned path=%s state=%d",
             fallback ? "fallback" : "callback", load<int>(manager+64));
 }
 
@@ -136,14 +135,14 @@ template<unsigned Runner>
 void intercept(void *self, void *key) {
     if (keyCode(key) == 4 && keyAction(key) == 1) {
         int state = load<int>(manager+64);
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "back received runner=%u flags=%x state=%d",
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "back received runner=%u flags=%x state=%d",
                 Runner, keyFlags(key), state);
         if (state == 2) {
             originalNotify<Runner>(self, key);
             return;
         }
         // Bypass the original before it stores the key interception timestamp.
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "back routed to gesture business");
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO, "back routed to gesture business");
         std::thread(gestureBack).detach();
         return;
     }
@@ -156,7 +155,7 @@ int install(dl_phdr_info *image, size_t, void *) {
         if (!guardInstalled) {
             installationFailed = true;
             report("reclaim_failed");
-            __android_log_print(ANDROID_LOG_ERROR, "HyosBackFixNative", "reclaim guard installation failed");
+            logging::installation(ANDROID_LOG_ERROR, "reclaim guard installation failed");
             return 1;
         }
         report("waiting_launcher");
@@ -205,9 +204,10 @@ void start() {
     fclose(file);
     if (strcmp(process, "com.miui.home")) return;
     std::call_once(installation, [] {
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative", "native installer started version=" MODULE_VERSION);
+        logging::installation(ANDROID_LOG_INFO, "native installer started version=" MODULE_VERSION);
+        report("waiting_runtime");
+        diagnostics::start();
         std::thread([] {
-            report("waiting_runtime");
             for (;;) {
                 dl_iterate_phdr(install, nullptr);
                 if (installationFailed) return;
@@ -225,7 +225,7 @@ void start() {
                 if (nativeAttempted && mergeAttempted) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(16));
             }
-            __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
+            logging::installation(ANDROID_LOG_INFO,
                     "native hook %s version=" MODULE_VERSION " merge_bridge=%d reclaim_guard=1 hook_pages=%zu",
                     nativeInstalled && mergeInstalled ? "installed" : "incomplete", mergeInstalled, hook_pages::count());
         }).detach();

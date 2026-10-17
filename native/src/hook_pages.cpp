@@ -1,6 +1,6 @@
 #include "hook_pages.h"
 #include "reclaim_ranges.h"
-#include <android/log.h>
+#include "logging.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -41,7 +41,7 @@ int guardedMadvise(void *address, size_t length, int advice) {
     if (result != 0) return result;
     lock.unlock();
     if (skipped)
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
+        BACKFIX_DEBUG_LOG(ANDROID_LOG_INFO,
                 "reclaim preserved hook_pages=%u address=%p length=%zu", skipped, address, length);
     return 0;
 }
@@ -97,7 +97,7 @@ bool install(const dl_phdr_info &image) {
         __atomic_store_n(slot, guardedMadvise, __ATOMIC_RELEASE);
         if (mprotect(reinterpret_cast<void *>(page), state.size, protection) != 0) return false;
         // The runtime's import slot is in data/RELRO, outside its r-x code reclamation.
-        __android_log_print(ANDROID_LOG_INFO, "HyosBackFixNative",
+        logging::installation(ANDROID_LOG_INFO,
                 "reclaim guard installed slot=%p page_size=%zu", static_cast<void *>(slot), state.size);
         return true;
     }

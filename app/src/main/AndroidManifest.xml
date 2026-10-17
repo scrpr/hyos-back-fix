@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Normal permission for the loopback status connection. No remote hosts. -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <queries><package android:name="com.miui.home" /></queries>
     <application
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@drawable/ic_back"
-        android:label="HyOS Back Fix"
+        android:label="HyperOS Back Fix"
         android:description="@string/module_description"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">

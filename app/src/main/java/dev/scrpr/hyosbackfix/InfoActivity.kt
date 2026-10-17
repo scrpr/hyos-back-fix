@@ -4,23 +4,57 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.icons.useful.Back
+import top.yukonga.miuix.kmp.icon.icons.useful.Refresh
+import top.yukonga.miuix.kmp.extra.SuperSwitch
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.darkColorScheme
 import top.yukonga.miuix.kmp.theme.lightColorScheme
@@ -40,84 +74,245 @@ class InfoActivity : ComponentActivity() {
 @Composable
 private fun BackFixScreen(context: Context) {
     val scope = rememberCoroutineScope()
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val checkMutex = remember { Mutex() }
     var report by remember { mutableStateOf<CheckReport?>(null) }
-    var running by remember { mutableStateOf(false) }
+    var running by remember { mutableStateOf(true) }
     var copied by remember { mutableStateOf(false) }
-    val check: () -> Unit = {
-        scope.launch {
-            running = true
-            copied = false
-            try { report = SelfCheck.run(context) } finally { running = false }
+    var changingDebug by remember { mutableStateOf(false) }
+    var page by rememberSaveable { mutableStateOf("home") }
+    suspend fun refresh(showProgress: Boolean) {
+        if (!checkMutex.tryLock()) return
+        try {
+            if (showProgress) running = true
+            report = SelfCheck.run(context)
+        } finally {
+            running = false
+            checkMutex.unlock()
         }
     }
-    LaunchedEffect(Unit) { check() }
-    Column(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background)
-        .safeDrawingPadding().verticalScroll(rememberScrollState())
-        .padding(horizontal = 24.dp).padding(top = 24.dp, bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("SCRPR  /  HYPEROS", color = MiuixTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-        Text("让返回\n及时发生。", fontSize = 38.sp, lineHeight = 46.sp, fontWeight = FontWeight.Bold)
-        Text("HyOS Back Fix", fontSize = 18.sp, fontWeight = FontWeight.Medium)
-        Text("三键导航 · 原厂动画 · 返回交接", color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Section {
-            Text(if (running) "正在自检…" else report?.title ?: "准备自检", fontSize = 21.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text(if (running) "正在读取设备与系统桌面信息。" else report?.detail ?: "", lineHeight = 23.sp)
-            Spacer(Modifier.height(18.dp))
-            TextButton(text = if (running) "检查中…" else "重新自检", onClick = check,
-                enabled = !running, modifier = Modifier.fillMaxWidth())
+    // No retained activation cache. Refresh on return and while the page is visible.
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            refresh(true)
+            while (true) {
+                delay(5000)
+                refresh(false)
+            }
         }
-        Text("运行状态", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Section {
-            report?.items?.forEachIndexed { index, item ->
-                if (index != 0) Spacer(Modifier.height(20.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(when (item.ok) { true -> "✓"; false -> "!"; null -> "·" },
-                        color = MiuixTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    Column(Modifier.weight(1f)) {
-                        Text(item.title, fontWeight = FontWeight.Medium)
-                        Spacer(Modifier.height(4.dp))
-                        Text(item.detail, fontSize = 13.sp, lineHeight = 20.sp,
-                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+    }
+    LaunchedEffect(copied) { if (copied) { delay(2000); copied = false } }
+    BackHandler(page != "home") { page = "home" }
+    val copyReport: () -> Unit = {
+        report?.let {
+            (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                .setPrimaryClip(ClipData.newPlainText("HyperOS Back Fix", it.asText()))
+            copied = true
+        }
+    }
+    val setDebugLogging: (Boolean) -> Unit = { enabled ->
+        changingDebug = true
+        scope.launch {
+            try {
+                checkMutex.withLock {
+                    report = SelfCheck.run(context, debugLogging = enabled)
+                    if (report?.native?.debugLogging != enabled) {
+                        Toast.makeText(context, "设置未确认，请重新连接桌面后重试", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } finally {
+                changingDebug = false
+            }
+        }
+    }
+    PageTransition(page = page, onBack = { page = "home" }) { currentPage ->
+        Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp).padding(top = if (currentPage == "home") 36.dp else 16.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(when (currentPage) { "help" -> "使用说明"; "diagnostics" -> "诊断信息"; else -> "HyperOS Back Fix" },
+                fontSize = 30.sp, lineHeight = 38.sp, fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 12.dp).padding(bottom = 12.dp))
+            when (currentPage) {
+                "home" -> {
+                    StatusCard(report, running, onRefresh = { scope.launch { refresh(true) } })
+                    Section {
+                        report?.items?.forEachIndexed { index, item ->
+                            if (index > 0) Spacer(Modifier.height(24.dp))
+                            Info(item.title, item.detail)
+                        }
+                        if (report == null) Text("正在读取设备信息…")
+                    }
+                    NavigationRow("诊断信息") { page = "diagnostics" }
+                    NavigationRow("使用说明") { page = "help" }
+                }
+                "diagnostics" -> {
+                    StatusCard(report, running)
+                    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(0.dp)) {
+                        SuperSwitch(title = "调试日志",
+                            summary = if (report?.native == null) "连接桌面后可用"
+                                else "写入 Xposed 日志\n重启桌面后自动关闭",
+                            checked = report?.native?.debugLogging == true,
+                            enabled = report?.native != null && report?.state != CheckState.RESTART
+                                && !running && !changingDebug,
+                            onCheckedChange = setDebugLogging,
+                            insideMargin = PaddingValues(horizontal = 24.dp, vertical = 18.dp))
+                    }
+                    Section {
+                        val native = report?.native
+                        if (native == null) {
+                            Info("未知状态", "未收到实时报告")
+                            Spacer(Modifier.height(20.dp))
+                            SelectionContainer { Text(report?.connectionDetail.orEmpty(), fontSize = 14.sp,
+                                color = MiuixTheme.colorScheme.onSurfaceVariantSummary) }
+                        } else {
+                            Info("ForRemote", hookState(native.remote, native))
+                            Spacer(Modifier.height(20.dp))
+                            Info("ForRemoteBack", hookState(native.remoteBack, native))
+                            Spacer(Modifier.height(20.dp))
+                            Info("动画业务", hookState(native.merge, native))
+                            Spacer(Modifier.height(20.dp))
+                            Info("回收保护", hookState(native.guard, native))
+                            Spacer(Modifier.height(20.dp))
+                            Info("Native进程", "PID ${native.pid} · ${native.version} (${native.versionCode})")
+                            Spacer(Modifier.height(20.dp))
+                            Info("补丁页面", "${native.pages} 页 · 每页 ${native.pageSize / 1024} KB")
+                        }
+                    }
+                    TextButton(text = if (copied) "已复制" else "复制诊断报告", onClick = copyReport,
+                        enabled = report != null && !running, modifier = Modifier.fillMaxWidth())
+                }
+                "help" -> {
+                    Section {
+                        Info("启用模块", "在支持原生注入的 LSPosed 中启用，作用域选择系统桌面（com.miui.home）。")
+                        Spacer(Modifier.height(24.dp))
+                        Info("重启桌面", "启用、更新或停用模块后，需要强制停止系统桌面。")
+                    }
+                    Section {
+                        Info("关于", "HyperOS Back Fix ${BuildConfig.VERSION_NAME}")
+                        Spacer(Modifier.height(24.dp))
+                        Info("开发者", "GPT 6 Astra, GPT 6.1 Sol")
+                        Spacer(Modifier.height(24.dp))
+                        Info("开源协议", "MIT License")
+                        Spacer(Modifier.height(24.dp))
+                        Info("开源许可", "miuix：Apache-2.0\nlibc++：Apache-2.0 with LLVM exception\nXZ Embedded：0BSD\n完整许可证随 APK 打包")
                     }
                 }
             }
-            if (report == null) Text("等待设备信息…")
         }
-        TextButton(text = if (copied) "已复制诊断报告" else "复制诊断报告", enabled = report != null && !running,
-            modifier = Modifier.fillMaxWidth(), onClick = {
-                (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                    .setPrimaryClip(ClipData.newPlainText("HyOS Back Fix", report!!.asText()))
-                copied = true
-            })
-        Text("开始使用", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Section {
-            Info("01  启用模块", "在支持 Modern API 102 和 HyperOS Rust Runtime native 注入的 LSPosed 中启用本模块。")
-            Info("02  选择系统桌面", "作用域仅勾选系统桌面（com.miui.home），首次启用后重启一次桌面。迁移时请先停用旧模块，避免重复 Hook。")
-            Info("03  更新与返回", "从桌面图标或后台卡片打开应用，在启动动画中按三键返回。启用、更新或停用模块后，重启一次系统桌面使改动生效。", last = true)
+    }
+}
+
+@Composable
+private fun PageTransition(
+    page: String,
+    onBack: () -> Unit,
+    content: @Composable ColumnScope.(String) -> Unit,
+) {
+    val pageStates = rememberSaveableStateHolder()
+    val direction = if (LocalLayoutDirection.current == LayoutDirection.Rtl) -1 else 1
+    AnimatedContent(
+        targetState = page,
+        modifier = Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background).safeDrawingPadding(),
+        transitionSpec = {
+            val motion = tween<IntOffset>(300, easing = FastOutSlowInEasing)
+            val transform = if (targetState == "home") {
+                // Pop: reveal the home page as the secondary page leaves.
+                (slideInHorizontally(motion) { -direction * it / 4 } + fadeIn(tween(180)))
+                    .togetherWith(slideOutHorizontally(motion) { direction * it } + fadeOut(tween(180)))
+            } else {
+                // Push: the new page enters from the trailing edge.
+                (slideInHorizontally(motion) { direction * it } + fadeIn(tween(180)))
+                    .togetherWith(slideOutHorizontally(motion) { -direction * it / 4 } + fadeOut(tween(180)))
+            }
+            // On pop the departing secondary page stays above the revealed home page.
+            transform.apply { targetContentZIndex = if (targetState == "home") 0f else 1f }
+        },
+        label = "pageNavigation",
+    ) { currentPage ->
+        // Each page keeps its scroll position when removed from composition.
+        pageStates.SaveableStateProvider(currentPage) {
+            Column(Modifier.fillMaxSize().background(MiuixTheme.colorScheme.background)) {
+                if (currentPage != "home") {
+                    IconButton(onClick = onBack, backgroundColor = Color.Transparent,
+                        modifier = Modifier.padding(start = 12.dp, top = 8.dp).size(48.dp)) {
+                        Icon(imageVector = MiuixIcons.Useful.Back, contentDescription = "返回上一页",
+                            tint = MiuixTheme.colorScheme.onBackground,
+                            modifier = Modifier.size(26.dp).graphicsLayer { scaleX = direction.toFloat() })
+                    }
+                }
+                content(currentPage)
+            }
         }
-        Text("它如何工作", fontSize = 14.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Section {
-            Info("沿用原厂返回流程", "接管桌面收到的返回键抬起事件，复用 merge / default break-open 业务、应用返回回调和原厂 fallback。关闭动画仍走原逻辑。")
-            Info("保护补丁所在页面", "运行时执行 MADV_DONTNEED 时保留 inline hook 所在页，其余页面继续回收，其他 advice 保持原行为。")
-            Info("按能力适配", "不校验机型、系统或桌面版本，不比较文件 hash，不锁定补丁前字节。仍需桌面提供对应 Rust / Dart 原生业务与 ARM64 ABI。", last = true)
+    }
+}
+
+private fun hookState(installed: Boolean, status: NativeStatus) = when {
+    installed -> "已安装"
+    status.failed -> "未安装"
+    else -> "等待安装"
+}
+
+@Composable
+private fun StatusCard(report: CheckReport?, running: Boolean, onRefresh: (() -> Unit)? = null) {
+    val dark = isSystemInDarkTheme()
+    val state = if (running) null else report?.state
+    val (background, foreground) = when (state) {
+        CheckState.ACTIVE -> if (dark) Color(0xFF173C2A) to Color(0xFFB9EBCB)
+            else Color(0xFFDFF5E5) to Color(0xFF18532E)
+        CheckState.FAILED -> if (dark) Color(0xFF482827) to Color(0xFFFFC9C4)
+            else Color(0xFFFBE5E2) to Color(0xFF852E27)
+        CheckState.WAITING, CheckState.RESTART -> if (dark) Color(0xFF44371F) to Color(0xFFF2D9A5)
+            else Color(0xFFFFF0D4) to Color(0xFF765215)
+        else -> MiuixTheme.colorScheme.surface to MiuixTheme.colorScheme.onSurface
+    }
+    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(24.dp),
+        colors = CardDefaults.defaultColors(color = background, contentColor = foreground)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(if (running) "正在自检…" else report?.title ?: "未连接", color = foreground,
+                fontSize = 23.sp, lineHeight = 30.sp, fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f, fill = false))
+            if (onRefresh != null) {
+                IconButton(onClick = onRefresh, enabled = !running, backgroundColor = Color.Transparent,
+                    modifier = Modifier.size(40.dp)) {
+                    Icon(imageVector = MiuixIcons.Useful.Refresh,
+                        contentDescription = if (running) "正在自检" else "重新自检",
+                        tint = if (running) foreground.copy(alpha = 0.5f) else foreground,
+                        modifier = Modifier.size(18.dp))
+                }
+            }
         }
-        Text("${BuildConfig.VERSION_NAME}  ·  MIT License  ·  by scrpr", fontSize = 12.sp,
-            color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-        Text("界面由 miuix 驱动 · miuix：Apache-2.0 · libc++：Apache-2.0 with LLVM exception · XZ Embedded：0BSD",
-            fontSize = 11.sp, lineHeight = 17.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+        Spacer(Modifier.height(8.dp))
+        Text(if (running) "正在连接系统桌面" else report?.detail.orEmpty(), color = foreground,
+            fontSize = 14.sp, lineHeight = 21.sp)
+    }
+}
+
+@Composable
+private fun NavigationRow(title: String, onClick: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(horizontal = 24.dp, vertical = 19.dp),
+        onClick = onClick) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(title, fontSize = 17.sp)
+            val color = MiuixTheme.colorScheme.onSurfaceVariantSummary
+            Canvas(Modifier.size(20.dp)) {
+                drawLine(color, Offset(size.width * .35f, size.height * .2f),
+                    Offset(size.width * .65f, size.height * .5f), 2.dp.toPx())
+                drawLine(color, Offset(size.width * .65f, size.height * .5f),
+                    Offset(size.width * .35f, size.height * .8f), 2.dp.toPx())
+            }
+        }
     }
 }
 
 @Composable
 private fun Section(content: @Composable ColumnScope.() -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(20.dp), content = content)
+    Card(modifier = Modifier.fillMaxWidth(), insideMargin = PaddingValues(24.dp), content = content)
 }
 
 @Composable
-private fun Info(title: String, description: String, last: Boolean = false) {
-    Text(title, fontWeight = FontWeight.Medium)
-    Spacer(Modifier.height(7.dp))
-    Text(description, fontSize = 14.sp, lineHeight = 23.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
-    if (!last) Spacer(Modifier.height(22.dp))
+private fun Info(title: String, description: String) {
+    Text(title, fontSize = 17.sp, lineHeight = 24.sp)
+    Spacer(Modifier.height(4.dp))
+    Text(description, fontSize = 14.sp, lineHeight = 21.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
 }
