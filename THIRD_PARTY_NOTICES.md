@@ -14,5 +14,7 @@ retains its original license; MIT does not replace those terms.
 | Gradle wrapper | Apache-2.0 | https://github.com/gradle/gradle |
 
 Bundled license texts are in `app/src/main/resources/META-INF/licenses`.
+The minimal APK bundles only the project MIT, XZ Embedded and libc++ license texts,
+with its own component notice in `minimal/src/main/resources/META-INF/licenses`.
 miuix: Copyright 2025, miuix-kotlin-multiplatform contributors.
 XZ source and its notice are also in `native/vendor/xz`.
